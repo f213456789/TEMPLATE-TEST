@@ -1,0 +1,45 @@
+name: PCBA - Data Package
+description: PCBA / 治具資料追蹤（自動建資料夾 + 指派人員）
+title: "[PCBA][MB] "
+labels: ["pcba"]
+
+body:
+  - type: input
+    id: board
+    attributes:
+      label: Board Name
+      description: 例如 MB / SUB / IO
+      placeholder: MB
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - PCBA
+        - FIXTURE
+        - TEST
+      default: 0
+    validations:
+      required: true
+
+  - type: input
+    id: owner
+    attributes:
+      label: Responsible GitHub ID
+      description: 負責人 GitHub username（例如 icybuzz）
+      placeholder: icybuzz
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Required Files
+      options:
+        - label: 3D uploaded
+        - label: 2D uploaded
+        - label: Gerber uploaded
+        - label: TP List confirmed
