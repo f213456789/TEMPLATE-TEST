@@ -1,0 +1,97 @@
+name: PCBA Init Folder & Assign
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  pcba-init:
+    if: contains(github.event.issue.labels.*.name, 'pcba')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Parse Issue Form
+        id: parse
+        run: |
+          BODY=$(jq -r '.issue.body' "$GITHUB_EVENT_PATH")
+
+          BOARD=$(echo "$BODY" | awk '/^### Board Name/{getline; print}')
+          OWNER=$(echo "$BODY" | awk '/^### Responsible GitHub ID/{getline; print}')
+
+          BOARD=$(echo "$BOARD" | tr -cd 'A-Za-z0-9_-')
+          OWNER=$(echo "$OWNER" | tr -cd 'A-Za-z0-9_-')
+
+          echo "board=$BOARD" >> $GITHUB_OUTPUT
+          echo "owner=$OWNER" >> $GITHUB_OUTPUT
+
+      - name: Create PCBA folders
+        run: |
+          BASE="PCBA"
+          BOARD="${{ steps.parse.outputs.board }}"
+
+          mkdir -p "$BASE/$BOARD"/{01_3D,02_2D,03_GERBER,04_SCHEMATIC,05_TP_LIST}
+          for d in "$BASE/$BOARD"/*; do
+            touch "$d/.gitkeep"
+          done
+
+          cat <<EOF > "$BASE/$BOARD/README.md"
+# PCBA Data Package - $BOARD
+
+## Required
+- 01_3D
+- 02_2D
+- 03_GERBER
+- 04_SCHEMATIC
+- 05_TP_LIST
+EOF
+
+      - name: Commit folders
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add .
+          git commit -m "Init PCBA folder for ${{ steps.parse.outputs.board }}" || echo "No changes"
+          git push
+
+      - name: Assign issue owner
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = "${{ steps.parse.outputs.owner }}";
+            if (!owner) return;
+
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              assignees: [owner]
+            });
+
+      - name: Comment notification
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const board = "${{ steps.parse.outputs.board }}";
+            const owner = "${{ steps.parse.outputs.owner }}";
+
+            const body = [
+              "✅ PCBA 資料夾已自動建立",
+              "",
+              `📁 路徑：PCBA/${board}/`,
+              "",
+              `@${owner} 請依 checklist 上傳資料，完成後再關閉 Issue。`
+            ].join("\n");
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            });
