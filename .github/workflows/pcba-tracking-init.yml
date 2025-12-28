@@ -1,4 +1,4 @@
-name: PCBA Tracking - Init Folder, Sub-Issue (Safe Assign)
+name: PCBA Tracking - Init Folder & Sub-Issue (Final)
 
 on:
   issues:
@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@v4
 
       # =====================================================
-      # 1️⃣ 解析 Project Code + 各資料夾負責人（Issue Form）
+      # 1️⃣ Parse Issue Content (Project Code + Owners)
       # =====================================================
       - name: Parse issue content
         id: parse
@@ -54,7 +54,7 @@ jobs:
           echo "grr=$(get_field 'GRR')" >> $GITHUB_OUTPUT
 
       # =====================================================
-      # 2️⃣ 建立資料夾
+      # 2️⃣ Create Folder Structure
       # =====================================================
       - name: Create folder structure
         if: steps.parse.outputs.code != ''
@@ -78,7 +78,7 @@ jobs:
           git push
 
       # =====================================================
-      # 3️⃣ 建立 Sub-Issue（容錯 assign）
+      # 3️⃣ Create Sub-Issues (Safe Assign + Real @)
       # =====================================================
       - name: Create sub-issues (safe assign)
         if: steps.parse.outputs.code != ''
@@ -90,7 +90,9 @@ jobs:
             const parent = context.payload.issue;
             const parentNumber = parent.number;
 
-            const code = "${{ steps.parse.outputs.code }}";
+            const clean = s => s ? s.trim() : s;
+
+            const code   = "${{ steps.parse.outputs.code }}";
             const prefix = "${{ steps.parse.outputs.prefix }}";
             const branch = (context.ref || "refs/heads/main").replace("refs/heads/", "");
             const baseUrl = `https://github.com/${owner}/${repo}/tree/${branch}/Project/${prefix}/${code}`;
@@ -120,9 +122,12 @@ jobs:
             ];
 
             for (const [title, folder, desc] of items) {
-              const assignees = ownersByFolder[folder].filter(Boolean);
+              const raw = ownersByFolder[folder] || [];
+              const assignees = raw.map(clean).filter(Boolean);
               const folderUrl = `${baseUrl}/${folder}`;
+
               let issue;
+              let assigned = false;
 
               try {
                 issue = await github.rest.issues.create({
@@ -132,7 +137,8 @@ jobs:
                   assignees,
                   labels: ["pcb-sub"],
                 });
-              } catch {
+                assigned = true;
+              } catch (e) {
                 issue = await github.rest.issues.create({
                   owner, repo,
                   title: `[${code}] ${title}`,
@@ -141,11 +147,25 @@ jobs:
                 });
               }
 
-              const mention = assignees.length ? assignees.map(u => `@${u}`).join(" ") : "⚠️ 無法自動指派（username 可能錯誤）";
+              const mention = assigned
+                ? assignees.map(u => `@${u}`).join(" ")
+                : "⚠️ 無法自動 @（username 錯誤或未加入 Repo）";
 
               await github.rest.issues.createComment({
                 owner, repo,
                 issue_number: issue.data.number,
-                body: `${mention}\n\n請完成 **${desc}**\n\n📁 ${folderUrl}\n\n👤 填寫的負責人：\n${assignees.join(", ") || "未填 / email"}`
+                body: [
+                  mention,
+                  ``,
+                  `請完成 **${desc}**`,
+                  ``,
+                  `📁 資料夾：`,
+                  folderUrl,
+                  ``,
+                  `👤 填寫的負責人：`,
+                  assignees.join(", ") || "（未填 / email / username 錯誤）",
+                  ``,
+                  `如有需要，請手動修正 Sub-Issue assignee。`
+                ].join("\n")
               });
             }
