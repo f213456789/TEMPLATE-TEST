@@ -1,0 +1,347 @@
+name: PCBA Tracking - Init Folder, Links, Sub-Issues (Template Driven)
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  init:
+    if: contains(github.event.issue.labels.*.name, 'pcb-tracking')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # ✅ needed for rebase/push safety
+
+      # =====================================================
+      # 1) Parse Issue Template fields (NO dependency on title)
+      #    - Project Code drives everything
+      #    - Owner fields must match Issue Template labels exactly
+      # =====================================================
+      - name: Parse issue template fields
+        id: parse
+        shell: bash
+        run: |
+          set -e
+          BODY="${{ github.event.issue.body }}"
+
+          get_field () {
+            # robust: find the line after "### <label>"
+            echo "$BODY" | grep -A1 "### $1" | tail -n1 | xargs || true
+          }
+
+          CODE="$(get_field 'Project Code')"
+
+          if ! echo "$CODE" | grep -qE '^VB[0-9]{4}$'; then
+            echo "Invalid or missing Project Code: $CODE"
+            echo "code=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          PREFIX="${CODE:0:4}xx"
+          echo "code=$CODE" >> $GITHUB_OUTPUT
+          echo "prefix=$PREFIX" >> $GITHUB_OUTPUT
+
+          # MUST match your Issue Template labels EXACTLY:
+          echo "gerber=$(get_field 'Gerber 檔案負責人（GitHub username 或 email）')" >> $GITHUB_OUTPUT
+          echo "owner3d=$(get_field '3D 圖檔負責人')" >> $GITHUB_OUTPUT
+          echo "owner2d=$(get_field '2D 圖檔負責人')" >> $GITHUB_OUTPUT
+          echo "pnp=$(get_field 'Pick & Place 負責人')" >> $GITHUB_OUTPUT
+          echo "sticker=$(get_field 'Sticker / Silk 負責人')" >> $GITHUB_OUTPUT
+          echo "inspection=$(get_field 'Inspection Index 負責人')" >> $GITHUB_OUTPUT
+          echo "dxf=$(get_field 'DXF 蓋板圖負責人')" >> $GITHUB_OUTPUT
+          echo "marking=$(get_field 'Marking / ICDM 負責人')" >> $GITHUB_OUTPUT
+          echo "grr=$(get_field 'GRR Report 負責人')" >> $GITHUB_OUTPUT
+
+      # =====================================================
+      # 2) Create folder structure
+      # =====================================================
+      - name: Create folder structure
+        if: steps.parse.outputs.code != ''
+        shell: bash
+        run: |
+          set -e
+          CODE="${{ steps.parse.outputs.code }}"
+          PREFIX="${{ steps.parse.outputs.prefix }}"
+          BASE="Project/${PREFIX}/${CODE}"
+
+          mkdir -p "${BASE}"/{01_Gerber,02_3D,03_2D,04_PnP,05_Sticker_Silk,06_Inspection_Index,07_DXF,08_Marking_ICDM,09_GRR_Report}
+
+          for d in "${BASE}"/*; do
+            touch "$d/.gitkeep"
+          done
+
+          cat > "${BASE}/README.md" << EOF
+          # PCBA Data Package - ${CODE}
+          Please upload files to corresponding folders.
+          EOF
+
+      # =====================================================
+      # 3) Commit & push (safe against "fetch first" conflicts)
+      # =====================================================
+      - name: Commit & push (safe)
+        if: steps.parse.outputs.code != ''
+        shell: bash
+        run: |
+          set -e
+
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+
+          git add Project/
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Init PCBA folders for ${{ steps.parse.outputs.code }} (issue #${{ github.event.issue.number }})"
+
+          # ✅ safest: rebase onto latest remote, then push with retries
+          for i in 1 2 3; do
+            git fetch origin main
+            git rebase origin/main || (git rebase --abort && true)
+
+            if git push origin HEAD:main; then
+              echo "Push succeeded."
+              exit 0
+            fi
+
+            echo "Push failed, retry $i..."
+            sleep 2
+          done
+
+          echo "Push failed after retries."
+          exit 1
+
+      # =====================================================
+      # 4) Comment checklist with per-folder links (parent issue)
+      # =====================================================
+      - name: Comment checklist with per-folder links
+        if: steps.parse.outputs.code != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            const issue_number = context.payload.issue.number;
+
+            const code   = "${{ steps.parse.outputs.code }}";
+            const prefix = "${{ steps.parse.outputs.prefix }}";
+            const branch = (context.ref || "refs/heads/main").replace("refs/heads/", "");
+            const base   = `Project/${prefix}/${code}`;
+            const baseUrl = `https://github.com/${owner}/${repo}/tree/${branch}/${base}`;
+
+            const items = [
+              { name: "Gerber：含板層 Gerber 檔", folder: "01_Gerber" },
+              { name: "PCBA 3D 圖檔（含元件擺放／含高度）", folder: "02_3D" },
+              { name: "PCBA 2D 尺寸圖（含板外形、孔位/尺寸等）", folder: "03_2D" },
+              { name: "Pick & Place / 貼片座標（含旋轉角、面別）", folder: "04_PnP" },
+              { name: "PCBA Sticker / Silk（絲印／貼紙圖）", folder: "05_Sticker_Silk" },
+              { name: "PCBA Inspection Index：檢測項目（AOI/ICT/功能測等）", folder: "06_Inspection_Index" },
+              { name: "PCBA 蓋板圖：DXF 檔", folder: "07_DXF" },
+              { name: "PCBA 文字印刷（Marking/Label）/ ICDM LIST：命名規則", folder: "08_Marking_ICDM" },
+              { name: "GRR Report：GRR 報告（如適用）", folder: "09_GRR_Report" },
+            ];
+
+            const checklistLines = items.map(i => {
+              const link = `${baseUrl}/${i.folder}`;
+              return `- [ ] ${i.name}  \n  📁 Folder：${link}`;
+            }).join("\n");
+
+            const body = [
+              `## 專案資料上傳檢核（含每項資料夾連結）`,
+              ``,
+              `- Project Code： **${code}**`,
+              `- Repo 目的地： \`${base}/\``,
+              `- 上傳總覽（GitHub tree）： ${baseUrl}`,
+              ``,
+              `### ✅ 檢核清單（逐項上傳到對應資料夾）`,
+              checklistLines,
+              ``,
+              `### 規則`,
+              `- 請將資料依類別/版本分類整理（已提供預設目錄）`,
+              `- 完成後請在本 Issue 勾選完成項目，並附上 PR / Commit / 子 Issue 連結（如有）`,
+              ``,
+              `### 補充說明`,
+              `（請在此補充：缺件原因、版本差異、PR/Commit 連結…）`,
+            ].join("\n");
+
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+
+      # =====================================================
+      # 5) Create sub-issues (safe assign + email fallback + real @)
+      #    - If username wrong / not collaborator: still create sub-issue (no fail)
+      # =====================================================
+      - name: Create sub-issues for each checklist item (safe assign)
+        if: steps.parse.outputs.code != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+
+            const parent = context.payload.issue;
+            const parentNumber = parent.number;
+
+            const clean = s => (s ? String(s).trim() : "");
+            const isEmail = s => /@/.test(String(s || ""));
+
+            const code   = "${{ steps.parse.outputs.code }}";
+            const prefix = "${{ steps.parse.outputs.prefix }}";
+            const branch = (context.ref || "refs/heads/main").replace("refs/heads/", "");
+            const baseUrl = `https://github.com/${owner}/${repo}/tree/${branch}/Project/${prefix}/${code}`;
+
+            // Optional: sub-issue label (must exist in repo)
+            const childLabels = ["pcb-sub"];
+
+            // From Issue Template parsed values:
+            const ownersByFolder = {
+              "01_Gerber":           clean("${{ steps.parse.outputs.gerber }}"),
+              "02_3D":               clean("${{ steps.parse.outputs.owner3d }}"),
+              "03_2D":               clean("${{ steps.parse.outputs.owner2d }}"),
+              "04_PnP":              clean("${{ steps.parse.outputs.pnp }}"),
+              "05_Sticker_Silk":     clean("${{ steps.parse.outputs.sticker }}"),
+              "06_Inspection_Index": clean("${{ steps.parse.outputs.inspection }}"),
+              "07_DXF":              clean("${{ steps.parse.outputs.dxf }}"),
+              "08_Marking_ICDM":     clean("${{ steps.parse.outputs.marking }}"),
+              "09_GRR_Report":       clean("${{ steps.parse.outputs.grr }}"),
+            };
+
+            // Fallback assignee if input is email/empty/wrong:
+            const fallbackAssignees = (parent.assignees?.length ? parent.assignees.map(a => a.login) : [parent.user.login]);
+
+            const items = [
+              { title: "Upload Gerber",           folder: "01_Gerber",           desc: "Gerber 檔案上傳與版本確認" },
+              { title: "Upload 3D",               folder: "02_3D",               desc: "3D（含高度）上傳與確認" },
+              { title: "Upload 2D",               folder: "03_2D",               desc: "2D 尺寸圖（外形/孔位/尺寸）上傳與確認" },
+              { title: "Upload PnP",              folder: "04_PnP",              desc: "Pick&Place 座標（角度/面別）上傳與確認" },
+              { title: "Upload Sticker/Silk",     folder: "05_Sticker_Silk",     desc: "絲印/貼紙圖上傳與確認" },
+              { title: "Upload Inspection Index", folder: "06_Inspection_Index", desc: "檢測項目（AOI/ICT/功能測）上傳與確認" },
+              { title: "Upload DXF",              folder: "07_DXF",              desc: "蓋板圖 DXF 上傳與確認" },
+              { title: "Upload Marking/ICDM",     folder: "08_Marking_ICDM",     desc: "Marking/Label、ICDM 命名規則上傳與確認" },
+              { title: "Upload GRR Report",       folder: "09_GRR_Report",       desc: "GRR 報告（如適用）上傳與確認" },
+            ];
+
+            // Avoid duplicates: check existing titles
+            const prefixTitle = `[${code}]`;
+            const existing = await github.rest.issues.listForRepo({ owner, repo, state: "all", per_page: 100 });
+            const existingTitles = new Set(existing.data.map(i => i.title));
+
+            const created = [];
+
+            for (const it of items) {
+              const childTitle = `${prefixTitle} ${it.title}`;
+              if (existingTitles.has(childTitle)) continue;
+
+              const folderUrl = `${baseUrl}/${it.folder}`;
+              const inputOwner = ownersByFolder[it.folder]; // may be username or email
+
+              const desiredAssignees =
+                (inputOwner && !isEmail(inputOwner))
+                  ? [inputOwner]
+                  : fallbackAssignees;
+
+              let issue;
+              let assigned = false;
+              let usedAssignees = desiredAssignees;
+
+              // Create sub-issue (try assign; if fails, create without assignees)
+              try {
+                issue = await github.rest.issues.create({
+                  owner,
+                  repo,
+                  title: childTitle,
+                  body: [
+                    `### ${it.desc}`,
+                    ``,
+                    `- 專案：**${code}**`,
+                    `- 對應資料夾： ${folderUrl}`,
+                    `- 母 Issue： #${parentNumber}`,
+                    ``,
+                    `#### 完成條件`,
+                    `- [ ] 檔案已上傳到資料夾`,
+                    `- [ ] 檔案命名/版本確認`,
+                    `- [ ] 如有差異，補充原因與相關 PR/Commit 連結`,
+                  ].join("\n"),
+                  labels: childLabels,
+                  assignees: desiredAssignees,
+                });
+                assigned = true;
+              } catch (e) {
+                issue = await github.rest.issues.create({
+                  owner,
+                  repo,
+                  title: childTitle,
+                  body: [
+                    `### ${it.desc}`,
+                    ``,
+                    `- 專案：**${code}**`,
+                    `- 對應資料夾： ${folderUrl}`,
+                    `- 母 Issue： #${parentNumber}`,
+                    ``,
+                    `#### 完成條件`,
+                    `- [ ] 檔案已上傳到資料夾`,
+                    `- [ ] 檔案命名/版本確認`,
+                    `- [ ] 如有差異，補充原因與相關 PR/Commit 連結`,
+                  ].join("\n"),
+                  labels: childLabels,
+                });
+                assigned = false;
+                usedAssignees = [];
+              }
+
+              created.push(issue.data.number);
+
+              // Mention policy:
+              // - only real @username when (a) assigned succeeded and (b) desired assignee is a username
+              let mentionLine = "⚠️ 無法自動 @（username 錯誤 / 未加入 Repo / 或填寫為 email）";
+              if (assigned && desiredAssignees.length === 1 && !isEmail(desiredAssignees[0])) {
+                mentionLine = `@${desiredAssignees[0]}`;
+              } else if (assigned && inputOwner && isEmail(inputOwner)) {
+                mentionLine = `⚠️ 你填的是 email（GitHub 無法 @email），已自動指派：${fallbackAssignees.map(u => `@${u}`).join(" ")}`;
+              }
+
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issue.data.number,
+                body: [
+                  mentionLine,
+                  ``,
+                  `請協助完成 **${it.desc}**`,
+                  ``,
+                  `📁 資料夾：`,
+                  folderUrl,
+                  ``,
+                  `👤 你填的負責人：`,
+                  inputOwner || "（未填）",
+                  ``,
+                  `✅ 實際指派：`,
+                  usedAssignees.length ? usedAssignees.join(", ") : "（未自動指派，請手動修正 assignee）",
+                  ``,
+                  `完成後請直接關閉此 Sub-Issue。`
+                ].join("\n")
+              });
+            }
+
+            // Parent issue comment: list created subs
+            if (created.length) {
+              const lines = created.map(n => `- [ ] #${n}`).join("\n");
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: parentNumber,
+                body: [
+                  `## 已自動建立子 Issue（Sub）`,
+                  `請依序完成並關閉子 Issue：`,
+                  ``,
+                  lines
+                ].join("\n")
+              });
+            }
