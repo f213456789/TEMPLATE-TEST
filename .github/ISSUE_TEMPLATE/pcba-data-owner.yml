@@ -1,0 +1,86 @@
+name: PCBA Data Owner Assignment
+description: PCBA 各資料夾負責人填寫（自動建立資料夾 / Sub-Issue）
+title: "[PCBA] VBxxxx"
+labels:
+  - pcb-tracking
+
+body:
+  - type: input
+    id: project_code
+    attributes:
+      label: Project Code
+      placeholder: VB1108
+    validations:
+      required: true
+
+  - type: input
+    id: owner_gerber
+    attributes:
+      label: Gerber 檔案負責人（GitHub username 或 email）
+      placeholder: ee-user / someone@liteon.com
+    validations:
+      required: true
+
+  - type: input
+    id: owner_3d
+    attributes:
+      label: 3D 圖檔負責人
+      placeholder: Tommy-Chen_liteon / Tommy.chen@liteon.com
+    validations:
+      required: true
+
+  - type: input
+    id: owner_2d
+    attributes:
+      label: 2D 圖檔負責人
+      placeholder: wang-me
+    validations:
+      required: true
+
+  - type: input
+    id: owner_pnp
+    attributes:
+      label: Pick & Place 負責人
+      placeholder: ee-user
+    validations:
+      required: true
+
+  - type: input
+    id: owner_sticker
+    attributes:
+      label: Sticker / Silk 負責人
+      placeholder: vendor-user / vendor@company.com
+    validations:
+      required: true
+
+  - type: input
+    id: owner_inspection
+    attributes:
+      label: Inspection Index 負責人
+      placeholder: qa-user
+    validations:
+      required: true
+
+  - type: input
+    id: owner_dxf
+    attributes:
+      label: DXF 蓋板圖負責人
+      placeholder: me-user
+    validations:
+      required: true
+
+  - type: input
+    id: owner_marking
+    attributes:
+      label: Marking / ICDM 負責人
+      placeholder: vendor-user
+    validations:
+      required: true
+
+  - type: input
+    id: owner_grr
+    attributes:
+      label: GRR Report 負責人
+      placeholder: qa-user
+    validations:
+      required: true
