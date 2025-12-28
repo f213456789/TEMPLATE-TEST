@@ -1,6 +1,6 @@
 name: PCBA Data Owner Assignment
 description: PCBA 各資料夾負責人填寫（自動建立資料夾 / Sub-Issue）
-title: "[PCBA] VBxxxx"
+title: "[PCBA] 資料上傳追蹤 - "
 labels:
   - pcb-tracking
 
